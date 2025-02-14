@@ -1,49 +1,55 @@
-import requests
-from fastapi import FastAPI, HTTPException
 import os
-from functions import *
-import subprocess
-AIPROXY_TOKEN = None
-with open(".env") as f:
-    try:
-        for line in f:
-            l=line.split("=")
-            key,value = l[0],l[1]
-            AIPROXY_TOKEN = value
-            # print(AIPROXY_TOKEN)
-    except:
-        print("Setup the enviroment variables")
-app = FastAPI()
-### /run and /read
-@app.get("/read")
-async def read_file(path: str):
-        if not path.startswith("/data"):
-             raise HTTPException(status_code = 403, detail = "Access to file is not allowed")
-        if not os.path.exists(path):
-             raise HTTPException(status_code = 404 , detail = "File is not found")
-        file = open(path, "r")
-        content = file.read()
-        return {"content": content}
-@app.post("/run")
-async def run_task(task: str):
-    try:
-        task_output = get_task_output(AIPROXY_TOKEN, task)
-        task = task.lower()
-        days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+import openai
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
 
-        if "count" in task:
-            for day in days:
-                if day in task:
-                    day = extract_dayname(task)
-                    count_days(day)
-        elif "install" in task:
-            pkgname = extract_package(task)
-            correct_package = get_correct_pkgname(pkgname)
-            if pkgname:
-                subprocess.run(["pip","install",correct_package])
-        else:
-             return {"status": "Task is recognized but not implemented yet"}
-        return {"status": "success", "task_output":task_output}
-    except Exception as e:
-         raise HTTPException(status_code =500, detail =str(e) )
+# Load environment variables from .env file
+load_dotenv()
+
+# Retrieve OpenAI API Key
+AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
+if not AIPROXY_TOKEN:
+    raise ValueError("AIPROXY_TOKEN is not set in the environment variables.")
+
+# Initialize OpenAI Client
+client = openai.OpenAI(api_key=AIPROXY_TOKEN)
+
+# Initialize FastAPI app
+app = FastAPI()
+
+# Endpoint: Read file contents
+@app.get("/read")
+def read_file(path: str):
+    try:
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        with open(path, "r") as file:
+            content = file.read().strip()
+        
+        if not content:
+            raise HTTPException(status_code=400, detail="File is empty")
+
+        return {"content": content}
     
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Endpoint: Execute a task using OpenAI API
+@app.post("/run")
+def run_task(task: str):
+    try:
+        response = client.completions.create(
+            model="gpt-4",
+            prompt=f"Execute: {task}",
+            max_tokens=100
+        )
+        return {"result": response.choices[0].text.strip()}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Run FastAPI
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
